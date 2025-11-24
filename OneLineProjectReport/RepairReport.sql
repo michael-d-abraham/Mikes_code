@@ -31,11 +31,6 @@ WITH ProjectInfo AS (
     LEFT JOIN project_stages          ON project_stages.id      = jobs.project_stage_id
     WHERE jobs.deleted_at IS NULL
       AND jobs.project_status_id <> 10
-      AND regions.active = 1
-      AND customers.enabled = 1
-      AND customers.deleted_at IS NULL
-      AND job_area.active = 1
-      AND job_category.active = 1
       AND LOWER(jobs.name) NOT LIKE '%warranty%'
       AND LOWER(jobs.name) NOT LIKE '%test%'
 ),
@@ -291,7 +286,7 @@ Base AS (
             + ' - ' + 
             ISNULL(JSON_VALUE(wosj.[fields], '$.serviceConditions.completion_year'), 'TBD')
         ) AS TCD,
-        work_orders.id                           AS service_id,
+        work_orders.id                           AS service_id,   -- this is what we'll list
 
         cc.RepArea                               AS Sales_Crack_LnFt,
 
@@ -365,14 +360,51 @@ Base AS (
       AND jobs.project_stage_id <> 10
 ),
 
+/* NEW: individual Repair service IDs per job */
+
+Repair_ServiceList AS (
+    SELECT
+        job_id,
+        MAX(CASE WHEN rn = 1 THEN CAST(service_id AS VARCHAR(20)) END) AS ServiceID1,
+        MAX(CASE WHEN rn = 2 THEN CAST(service_id AS VARCHAR(20)) END) AS ServiceID2,
+        MAX(CASE WHEN rn = 3 THEN CAST(service_id AS VARCHAR(20)) END) AS ServiceID3,
+        MAX(CASE WHEN rn = 4 THEN CAST(service_id AS VARCHAR(20)) END) AS ServiceID4
+    FROM (
+        SELECT DISTINCT
+            job_id,
+            service_id,
+            ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY service_id) AS rn
+        FROM Base
+        WHERE service_id IS NOT NULL
+    ) ds
+    GROUP BY job_id
+),
+
+Repair_ServiceNames AS (
+    SELECT
+        job_id,
+        STRING_AGG(service_name, ', ') WITHIN GROUP (ORDER BY first_rn) AS ServiceNames
+    FROM (
+        SELECT
+            job_id,
+            service_name,
+            MIN(rn) AS first_rn
+        FROM Base
+        WHERE service_name IS NOT NULL
+        GROUP BY job_id, service_name
+    ) names
+    GROUP BY job_id
+),
+
 RepairAgg AS (
     SELECT
         b.job_id,
 
         MAX(b.wo_count)                            AS [R-# in Category],
 
-        MAX(CASE WHEN b.rn = 1 THEN b.service_name END) AS [R-Service],
-        MAX(CASE WHEN b.rn = 1 THEN b.TCD          END) AS [R-TCD],
+        rsn.ServiceNames                           AS [R-Service],
+
+        MAX(CASE WHEN b.rn = 1 THEN b.TCD END)     AS [R-TCD],
 
         CASE 
             WHEN SUM(CASE WHEN b.Next_WO_Date IS NOT NULL THEN 1 ELSE 0 END) = 0
@@ -382,7 +414,14 @@ RepairAgg AS (
             ELSE ''
         END                                         AS [R-YR CMPLT],
 
-        MAX(CASE WHEN b.rn = 1 THEN b.service_id   END) AS [R-Service ID],
+        rsl.ServiceID1                              AS [R-Service ID],
+        ''                                          AS [R-Rev1],
+        rsl.ServiceID2                              AS [R-Service ID2],
+        ''                                          AS [R-Rev2],
+        rsl.ServiceID3                              AS [R-Service ID3],
+        ''                                          AS [R-Rev3],
+        rsl.ServiceID4                              AS [R-Service ID4],
+        ''                                          AS [R-Rev4],
 
         ''                                         AS [R-NS Revenue], 
 
@@ -425,7 +464,9 @@ RepairAgg AS (
         )                                          AS [R-NextWO]
 
     FROM Base b
-    GROUP BY b.job_id
+    LEFT JOIN Repair_ServiceList  rsl ON rsl.job_id = b.job_id
+    LEFT JOIN Repair_ServiceNames rsn ON rsn.job_id = b.job_id
+    GROUP BY b.job_id, rsl.ServiceID1, rsl.ServiceID2, rsl.ServiceID3, rsl.ServiceID4, rsn.ServiceNames
 ),
 
 /* --------- MINIMAL ST (Category 1) JUST FOR ST-Service & ST-YR CMPLT --------- */
@@ -513,24 +554,40 @@ SELECT
     ra.[R-Service],
     ra.[R-TCD],
     ra.[R-YR CMPLT],
+    ''                      AS [NS INV YR2],
     ra.[R-Service ID],
+    ra.[R-Rev1],
+    ra.[R-Service ID2],
+    ra.[R-Rev2],
+    ra.[R-Service ID3],
+    ra.[R-Rev3],
+    ra.[R-Service ID4],
+    ra.[R-Rev4],
     ra.[R-NS Revenue],
     ra.[R-RepArea],
     ra.[R-CCJ],
     ra.[R-ActQty],
     ra.[R-%CMPT],
+    ''                      AS [R-Mat Cost],
     ra.[R-Total Mat Cost],
     ra.[R-# of WO's],
     ra.[R-Ttl Labor Hrs],
+    ''                      AS [R-Labor Cost],
     ra.[R-Ttl Labor Cost],
     ra.[R-# of Equip],
+    ''                      AS [R-Equip Cost],
     ra.[R-Ttl Equip Cost],
     ra.[R-LastWO],
     ra.[R-NextWO],
 
     -- Surface Treatment summary at the end
-    st.[ST-Service],
-    st.[ST-YR CMPLT]
+    st.[ST-Service]         AS [S - Services],
+    st.[ST-YR CMPLT]        AS [S-Yr-Cmplt],
+    ''                      AS [ ],
+    ''                      AS [R Revenue],
+    ''                      AS [R Cost],
+    ''                      AS [R GM],
+    ''                      AS [R GM%]
 
 FROM ProjectInfo pi
 LEFT JOIN RepairAgg ra

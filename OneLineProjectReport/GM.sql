@@ -1,7 +1,7 @@
 WITH Next_WO_Date_Calculations AS (
     SELECT
         wo.id AS work_order_id,
-        FORMAT(MIN(t.date), 'MM-dd-yyyy') AS Next_WO_Date
+        MIN(t.date) AS Next_WO_Date   -- keep as DATE/DATETIME, don't FORMAT here
     FROM tasks t
     JOIN work_orders wo ON t.work_order_id = wo.id
     WHERE t.date > GETDATE()
@@ -10,7 +10,7 @@ WITH Next_WO_Date_Calculations AS (
 Last_WO_Date_Calculations AS (
     SELECT
         wo.id AS work_order_id,
-        FORMAT(MAX(t.date), 'MM-dd-yyyy') AS Last_WO_Date
+        MAX(t.date) AS Last_WO_Date   -- keep as DATE/DATETIME, don't FORMAT here
     FROM tasks t
     JOIN work_orders wo ON t.work_order_id = wo.id
     WHERE t.date < GETDATE()
@@ -32,7 +32,7 @@ ST_Base AS (
        AND wo.deleted_at IS NULL
     INNER JOIN services s
         ON s.id = wo.service_id
-       AND s.service_categories_id = 1
+       AND s.service_categories_id = 1     -- ST only
     LEFT JOIN work_order_services_json wosj
         ON wosj.work_order_id = wo.id
     LEFT JOIN Last_WO_Date_Calculations lwd
@@ -91,28 +91,32 @@ SELECT
     '' AS [Ttl Cost],
     '' AS [Ttl GM],
     '' AS [Ttl GM %]
-
 FROM jobs
 LEFT JOIN ST_YR_CMPLT styr
     ON styr.job_id = jobs.id
-LEFT JOIN customers         ON customers.id = jobs.customer_id
-LEFT JOIN customers end_customer ON end_customer.id = jobs.end_customer_id
-LEFT JOIN regions           ON regions.id = jobs.region_id
-LEFT JOIN job_area          ON job_area.id = jobs.sub_region_id
-LEFT JOIN locations         ON locations.id = jobs.location_id
-LEFT JOIN users sales_rep   ON sales_rep.id = jobs.estimator_id
-LEFT JOIN users sales_support ON sales_support.id = jobs.sales_support_id
-LEFT JOIN users PM          ON PM.id = jobs.manager_id
-LEFT JOIN project_populations ON project_populations.id = jobs.project_population_id
-LEFT JOIN job_category      ON job_category.id = jobs.category
-LEFT JOIN project_stages    ON project_stages.id = jobs.project_stage_id
-
-WHERE jobs.deleted_at IS NULL
-  AND jobs.project_status_id <> 10
-  AND regions.active = 1
-  AND customers.enabled = 1
-  AND customers.deleted_at IS NULL
-  AND job_area.active = 1
-  AND job_category.active = 1
-  AND LOWER(jobs.name) NOT LIKE '%warranty%'
-  AND LOWER(jobs.name) NOT LIKE '%test%';
+LEFT JOIN customers              ON customers.id           = jobs.customer_id
+LEFT JOIN customers end_customer ON end_customer.id        = jobs.end_customer_id
+LEFT JOIN regions                ON regions.id             = jobs.region_id
+LEFT JOIN job_area               ON job_area.id            = jobs.sub_region_id
+LEFT JOIN locations              ON locations.id           = jobs.location_id
+LEFT JOIN users sales_rep        ON sales_rep.id           = jobs.estimator_id
+LEFT JOIN users sales_support    ON sales_support.id       = jobs.sales_support_id
+LEFT JOIN users PM               ON PM.id                  = jobs.manager_id
+LEFT JOIN project_populations    ON project_populations.id = jobs.project_population_id
+LEFT JOIN job_category           ON job_category.id        = jobs.category
+LEFT JOIN project_stages         ON project_stages.id      = jobs.project_stage_id
+WHERE
+    jobs.deleted_at IS NULL
+    AND jobs.project_status_id <> 10
+    AND LOWER(jobs.name) NOT LIKE '%warranty%'
+    AND LOWER(jobs.name) NOT LIKE '%test%'
+    -- filter to jobs that have at least one WO in service categories 1,2,3
+    AND EXISTS (
+        SELECT 1
+        FROM work_orders wo2
+        JOIN services s2
+            ON s2.id = wo2.service_id
+        WHERE wo2.job_id = jobs.id
+          AND wo2.deleted_at IS NULL
+          AND s2.service_categories_id IN (1,2,3)
+    );

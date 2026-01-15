@@ -219,7 +219,7 @@ ccj_crack AS (
 EquipCount AS (
     SELECT
         wo.id AS work_order_id,
-        COUNT(DISTINCT tm.fleet_id) AS fleet_count
+        COUNT(DISTINCT t.id) AS fleet_count
     FROM work_orders wo
     INNER JOIN services s ON s.id = wo.service_id
     INNER JOIN tasks t ON t.work_order_id = wo.id
@@ -229,6 +229,37 @@ EquipCount AS (
         AND t.task_status_id <> 8
         AND tm.deleted_at IS NULL
         AND tm.actual IS NOT NULL
+    GROUP BY wo.id
+),
+
+WeatherCounts AS (
+    SELECT
+        wo.id AS work_order_id,
+        -- Tasks with a weather issue and NO material down
+        COUNT(DISTINCT CASE 
+                           WHEN t.weather_issue = 1 
+                                AND tm_has_mat.task_id IS NULL 
+                           THEN t.id 
+                       END) AS Weather_No_Mat_Count,
+        -- Tasks with a weather issue and material down
+        COUNT(DISTINCT CASE 
+                           WHEN t.weather_issue = 1 
+                                AND tm_has_mat.task_id IS NOT NULL 
+                           THEN t.id 
+                       END) AS Weather_Partial_Count
+    FROM work_orders wo
+    INNER JOIN tasks t 
+        ON t.work_order_id = wo.id
+    LEFT JOIN (
+        SELECT DISTINCT task_id
+        FROM task_material
+        WHERE deleted_at IS NULL
+          AND actual IS NOT NULL
+    ) tm_has_mat
+        ON tm_has_mat.task_id = t.id
+    WHERE
+        wo.deleted_at IS NULL
+        AND t.task_status_id <> 8
     GROUP BY wo.id
 ),
 
@@ -286,7 +317,9 @@ WorkOrderBase AS (
         em.Est_Material                          AS Est_Material,
         am.Act_Material                          AS Act_Material,
         lh.total_labor_hours                     AS Total_Labor_Hours,
-        ec.fleet_count                           AS Fleet_Count,
+        ISNULL(ec.fleet_count, 0)                AS Fleet_Count,
+        ISNULL(wc.Weather_No_Mat_Count, 0)       AS Weather_No_Mat,
+        ISNULL(wc.Weather_Partial_Count, 0)      AS Weather_Partial,
         ct.task_count                            AS task_count,
         sc.sub_cost                  AS sub_cost,
         sc.sub_revenue               AS sub_revenue,
@@ -322,6 +355,8 @@ WorkOrderBase AS (
         ON work_order_statuses.id = work_orders.work_order_status_id
     LEFT JOIN EquipCount ec
         ON ec.work_order_id = work_orders.id
+    LEFT JOIN WeatherCounts wc
+        ON wc.work_order_id = work_orders.id
     LEFT JOIN SubcontractorSums sc
         ON sc.work_order_id = work_orders.id
     LEFT JOIN Next_WO_Date_Calculations nwd 
@@ -395,6 +430,8 @@ SELECT
     wob.task_count                              AS [# of Tasks],
     wob.Total_Labor_Hours                       AS [Ttl Labor Hrs],
     wob.Fleet_Count                             AS [# of Equip],
+    wob.Weather_No_Mat                          AS [Weather - No Mat],
+    wob.Weather_Partial                         AS [Weather - Partial],
     wob.sub_revenue                             AS [sub-revenue],
     wob.sub_cost                                AS [sub-cost],
     

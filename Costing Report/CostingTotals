@@ -1,0 +1,126 @@
+WITH CrewSizeCalculation AS (
+    SELECT 
+        tc.task_id,
+        SUM(
+            CASE
+                WHEN (DATEDIFF(MINUTE, tc.[in], tc.[out]) / 60.0) BETWEEN 0 AND 3 THEN 0.3
+                WHEN (DATEDIFF(MINUTE, tc.[in], tc.[out]) / 60.0) BETWEEN 3 AND 5 THEN 0.5
+                WHEN (DATEDIFF(MINUTE, tc.[in], tc.[out]) / 60.0) BETWEEN 5 AND 8 THEN 0.75
+                WHEN (DATEDIFF(MINUTE, tc.[in], tc.[out]) / 60.0) > 8 THEN 1
+                ELSE 0
+            END
+        ) AS crew_size
+    FROM timeclock tc
+    WHERE tc.deleted_at IS NULL
+    GROUP BY tc.task_id
+),
+LaborHoursCalculation AS (
+    SELECT 
+        tc.task_id,
+        SUM(DATEDIFF(MINUTE, tc.[in], tc.[out])) / 60.0 AS total_labor_hours
+    FROM timeclock tc
+    WHERE tc.deleted_at IS NULL
+    GROUP BY tc.task_id
+),
+UserCount AS (
+    SELECT
+        tc.task_id,
+        COUNT(DISTINCT tc.user_id) AS user_count
+    FROM timeclock tc
+    WHERE tc.deleted_at IS NULL
+    GROUP BY tc.task_id
+)
+
+SELECT
+    subquery.project_ID,
+    CAST(ROUND(AVG(unique_crew_count), 2) AS FLOAT) AS avg_unique_crew_count,
+    CAST(ROUND(AVG(daily_crews), 2) AS FLOAT) AS avg_daily_crews,
+    CAST(ROUND(SUM(days_touched), 2) AS FLOAT) AS total_days_touched,
+    CAST(ROUND(SUM(labor_hours), 2) AS FLOAT) AS total_labor_hours,
+    CAST(ROUND(AVG(crew_size), 2) AS FLOAT) AS avg_crew_size,
+    CAST(ROUND(SUM(weather_issue_hours), 2) AS FLOAT) AS total_weather_issue_hours,
+    CAST(ROUND(SUM(add_equip_hours), 2) AS FLOAT) AS total_add_equip_hours
+FROM (
+    SELECT
+        jobs.id AS project_ID,
+        tasks.id AS WO_ID,
+        services.abbreviation AS Service,
+
+        -- Unique crew count
+        (
+            SELECT COUNT(DISTINCT tc.user_id)
+            FROM timeclock tc
+            WHERE tc.task_id = tasks.id 
+              AND tc.deleted_at IS NULL
+        ) AS unique_crew_count,
+
+        -- Daily crews = unique crew / 3
+        ROUND((
+            SELECT COUNT(DISTINCT tc.user_id) * 1.0 / 3.0
+            FROM timeclock tc
+            WHERE tc.task_id = tasks.id 
+              AND tc.deleted_at IS NULL
+        ), 2) AS daily_crews,
+
+        -- Days touched: capped crew-day logic
+        ROUND(
+            CASE
+                WHEN ROUND((LaborHoursCalculation.total_labor_hours) / (
+                    SELECT COUNT(DISTINCT tc.user_id)
+                    FROM timeclock tc
+                    WHERE tc.task_id = tasks.id 
+                      AND tc.deleted_at IS NULL
+                ) * 0.1 * 1.05, 2) < 1 
+                THEN ROUND((LaborHoursCalculation.total_labor_hours) / (
+                    SELECT COUNT(DISTINCT tc.user_id)
+                    FROM timeclock tc
+                    WHERE tc.task_id = tasks.id 
+                      AND tc.deleted_at IS NULL
+                ) * 0.1 * 1.05, 2)
+                ELSE 1
+            END, 2
+        ) AS days_touched,
+
+        -- Labor hours
+        ROUND(LaborHoursCalculation.total_labor_hours, 2) AS labor_hours,
+
+        -- Crew size
+        ROUND(CrewSizeCalculation.crew_size, 2) AS crew_size,
+
+        -- Weather issue hours
+        CASE 
+            WHEN tasks.weather_issue = 1 THEN ROUND(LaborHoursCalculation.total_labor_hours, 2)
+            ELSE NULL
+        END AS weather_issue_hours,
+
+        -- Additional equipment hours
+        ROUND(
+            CASE
+                WHEN LaborHoursCalculation.total_labor_hours > (UserCount.user_count * 10) THEN 
+                    (LaborHoursCalculation.total_labor_hours - (UserCount.user_count * 10)) / UserCount.user_count
+                ELSE NULL
+            END, 2
+        ) AS add_equip_hours
+
+    FROM jobs
+    LEFT JOIN work_orders ON work_orders.job_id = jobs.id
+    LEFT JOIN tasks ON work_orders.id = tasks.work_order_id
+    LEFT JOIN services ON services.id = work_orders.service_id
+    LEFT JOIN timeclock ON timeclock.task_id = tasks.id
+    LEFT JOIN LaborHoursCalculation ON LaborHoursCalculation.task_id = tasks.id
+    LEFT JOIN CrewSizeCalculation ON CrewSizeCalculation.task_id = tasks.id
+    LEFT JOIN UserCount ON UserCount.task_id = tasks.id
+    WHERE services.id IN (9, 10, 12, 27, 28, 43, 44, 46, 47, 7, 30, 26)
+      AND jobs.id = 7820
+      AND work_orders.id = 23263
+    GROUP BY 
+        jobs.id, 
+        tasks.id, 
+        services.abbreviation, 
+        LaborHoursCalculation.total_labor_hours, 
+        CrewSizeCalculation.crew_size,
+        tasks.weather_issue,
+        UserCount.user_count
+) AS subquery
+GROUP BY subquery.project_ID
+ORDER BY subquery.project_ID;

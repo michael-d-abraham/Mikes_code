@@ -559,7 +559,7 @@ SS_Agg AS (
     GROUP BY b.job_id, sn.ServiceNames
 ),
 
-/* ---------- CAT 2 & 3 (Repair) – stripped down ---------- */
+/* ---------- CAT 2, 3, 4 & 6 (Repair/Sub) – stripped down ---------- */
 
 C23_Base AS (
     SELECT
@@ -592,7 +592,7 @@ C23_Base AS (
     WHERE
         jobs.deleted_at IS NULL
       AND work_orders.deleted_at IS NULL
-      AND services.service_categories_id IN (2,3)
+      AND services.service_categories_id IN (2,3,4,6)
       AND jobs.project_stage_id <> 10
 ),
 
@@ -813,7 +813,7 @@ Est_Material_Calculations AS (
         j.deleted_at IS NULL
         AND wo.deleted_at IS NULL
         AND j.project_stage_id <> 10
-        AND s.service_categories_id IN (2,3)
+        AND s.service_categories_id IN (2,3,4,6)
         AND wosj.service_id IN (9, 7, 26, 30, 17, 10, 12, 27, 28)
     GROUP BY
         wosj.work_order_id,
@@ -837,7 +837,7 @@ Act_Material_Calculations AS (
         AND j.deleted_at IS NULL
         AND wo.deleted_at IS NULL
         AND j.project_stage_id <> 10
-        AND s.service_categories_id IN (2,3)
+        AND s.service_categories_id IN (2,3,4,6)
         AND t.task_status_id <> 8
     GROUP BY wo.id
 ),
@@ -873,7 +873,7 @@ EquipCount AS (
             AND t.task_status_id <> 8
             AND tm.deleted_at IS NULL
             AND tm.actual IS NOT NULL
-            AND s.service_categories_id IN (2,3)
+            AND s.service_categories_id IN (2,3,4,6)
         GROUP BY j.id, t.id
     ) tf
     GROUP BY job_id
@@ -902,7 +902,7 @@ LaborHours AS (
     WHERE
         project_stages.id <> 10
         AND timeclock.deleted_at IS NULL
-        AND services.service_categories_id IN (2,3)
+        AND services.service_categories_id IN (2,3,4,6)
         AND tasks.task_status_id <> 8
     GROUP BY jobs.id, work_orders.id
 ),
@@ -922,7 +922,7 @@ TaskMaterialSums AS (
         AND jobs.deleted_at IS NULL
         AND work_orders.deleted_at IS NULL
         AND jobs.project_stage_id <> 10
-        AND services.service_categories_id IN (2,3)
+        AND services.service_categories_id IN (2,3,4,6)
         AND tasks.task_status_id <> 8
     GROUP BY jobs.id, work_orders.id
 ),
@@ -938,7 +938,7 @@ CountWOs AS (
     WHERE j.deleted_at IS NULL
       AND wo.deleted_at IS NULL
       AND j.project_stage_id <> 10
-      AND s.service_categories_id IN (2,3)
+      AND s.service_categories_id IN (2,3,4,6)
     GROUP BY j.id, wo.service_id
 ),
 
@@ -955,7 +955,7 @@ CountTasks AS (
       AND wo.deleted_at IS NULL
       AND j.project_stage_id <> 10
       AND t.task_status_id <> 8
-      AND s.service_categories_id IN (2,3)
+      AND s.service_categories_id IN (2,3,4,6)
     GROUP BY j.id, wo.service_id
 ),
 
@@ -979,7 +979,7 @@ ccj_crack AS (
         j.deleted_at IS NULL
         AND wo.deleted_at IS NULL
         AND j.project_stage_id <> 10
-        AND s.service_categories_id IN (2,3)
+        AND s.service_categories_id IN (2,3,4,6)
     GROUP BY wosj.work_order_id, wosj.service_id
 ),
 
@@ -1067,7 +1067,7 @@ Base AS (
     WHERE
         jobs.deleted_at IS NULL
       AND work_orders.deleted_at IS NULL
-      AND services.service_categories_id IN (2,3)
+      AND services.service_categories_id IN (2,3,4,6)
       AND jobs.project_stage_id <> 10
 ),
 
@@ -1426,7 +1426,7 @@ WHERE
     AND LOWER(jobs.name) LIKE '%warranty%'
     AND LOWER(jobs.name) NOT LIKE '%test%'
     AND jobs.created_at >= '2026-01-01'
-    -- filter to jobs that have at least one WO in service categories 1,2,3
+    -- filter to jobs that have at least one WO in service categories 1,2,3,4,5,6
     AND EXISTS (
         SELECT 1
         FROM work_orders wo2
@@ -1434,7 +1434,7 @@ WHERE
             ON s2.id = wo2.service_id
         WHERE wo2.job_id = jobs.id
           AND wo2.deleted_at IS NULL
-          AND s2.service_categories_id IN (1,2,3)
+          AND s2.service_categories_id IN (1,2,3,4,5,6)
     );
 
 -- ============================================================================

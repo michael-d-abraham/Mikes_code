@@ -25,14 +25,15 @@ WITH TaskLaborHours AS (
 
 TaskLocationMetrics AS (
     -- Get square footage and estimated materials per task from task_locations
-    -- Falls back to tasks.daily_sqft if task_locations data is null
+    -- Aggregated separately to avoid multiplication with task_material joins
     SELECT
         tasks.id AS task_id,
         COALESCE(
             SUM(COALESCE(tl.pm_sq_ft, tl.sq_ft)),
             MAX(tasks.daily_sqft),
             0
-        ) AS wo_sqft
+        ) AS wo_sqft,
+        SUM(COALESCE(tl.pm_gallons, tl.gallons)) AS est_materials_from_locations
     FROM tasks
     LEFT JOIN task_locations tl ON tl.task_id = tasks.id AND tl.deleted_at IS NULL
     GROUP BY tasks.id
@@ -40,19 +41,14 @@ TaskLocationMetrics AS (
 
 TaskMaterialMetrics AS (
     -- Get actual materials, estimated materials, and material ID per task from task_material
-    -- Multiple task_material rows per task will be summed
+    -- Aggregated separately to avoid multiplication with task_locations joins
     SELECT
         tasks.id AS task_id,
         MAX(tm.material_id) AS material_id,
         ISNULL(ROUND(SUM(tm.actual), 0), 0) AS actual_materials,
-        COALESCE(
-            SUM(COALESCE(tl.pm_gallons, tl.gallons)),
-            SUM(tm.estimated),
-            0
-        ) AS est_materials
+        SUM(tm.estimated) AS est_materials_from_material
     FROM tasks
     LEFT JOIN task_material tm ON tm.task_id = tasks.id AND tm.deleted_at IS NULL
-    LEFT JOIN task_locations tl ON tl.task_id = tasks.id AND tl.deleted_at IS NULL
     GROUP BY tasks.id
 )
 
@@ -90,13 +86,14 @@ SELECT
     
     -- Area and Material Metrics
     CAST(ISNULL(tlm.wo_sqft, 0) AS DECIMAL(10,1)) AS [WO SqFt],
-    CAST(ISNULL(tmm.est_materials, 0) AS DECIMAL(10,1)) AS [Est Materials],
+    CAST(COALESCE(tlm.est_materials_from_locations, tmm.est_materials_from_material, 0) AS DECIMAL(10,1)) AS [Est Materials],
     ISNULL(tmm.actual_materials, 0) AS [Actual Materials],
     
     -- AppRate: WO SqFt / Est Materials
     CASE 
-        WHEN tmm.est_materials IS NOT NULL AND tmm.est_materials <> 0 
-        THEN CAST(ROUND(tlm.wo_sqft / tmm.est_materials, 1) AS DECIMAL(10,1))
+        WHEN COALESCE(tlm.est_materials_from_locations, tmm.est_materials_from_material) IS NOT NULL 
+         AND COALESCE(tlm.est_materials_from_locations, tmm.est_materials_from_material) <> 0 
+        THEN CAST(ROUND(tlm.wo_sqft / COALESCE(tlm.est_materials_from_locations, tmm.est_materials_from_material), 1) AS DECIMAL(10,1))
         ELSE NULL
     END AS AppRate,
     

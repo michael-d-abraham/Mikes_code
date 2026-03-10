@@ -7,8 +7,8 @@ SELECT
     work_order_statuses.name AS [Service Status],
     tasks.id AS [Task ID],
     task_statuses.name AS [Task Status],
-    tasks.completed_at AS [Completed At],
-    tasks.completed_by AS [Completed By]
+    tasks.pm_completed_at AS [Completed At],
+    tasks.pm_completed_by AS [Completed By]
 FROM jobs
 LEFT JOIN work_orders 
     ON jobs.id = work_orders.job_id
@@ -22,7 +22,7 @@ LEFT JOIN work_order_statuses
     ON work_order_statuses.id = work_orders.work_order_status_id
 LEFT JOIN task_statuses 
     ON task_statuses.id = tasks.task_status_id
-WHERE tasks.completed_at IS NOT NULL
+WHERE tasks.pm_completed_at IS NOT NULL
   AND tasks.task_status_id <> 6
   AND tasks.task_status_id <> 8
   AND jobs.deleted_at IS NULL

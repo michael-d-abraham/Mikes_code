@@ -7,8 +7,8 @@ SELECT
     work_order_statuses.name AS [Service Status],
     tasks.id AS [Task ID],
     task_statuses.name AS [Task Status],
-    tasks.pm_completed_at AS [Completed At],
-    tasks.pm_completed_by AS [Completed By]
+    tasks.pm_completed_at AS [PM Completed At],
+    tasks.pm_completed_by AS [PM Completed By]
 FROM jobs
 LEFT JOIN work_orders 
     ON jobs.id = work_orders.job_id

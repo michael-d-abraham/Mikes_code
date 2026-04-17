@@ -1,4 +1,4 @@
-DECLARE @start_date DATE = '2025-07-01';
+DECLARE @start_date DATE = '2023-07-01';
 DECLARE @end_date   DATE = '2025-07-31';
 
 WITH labor_per_task_date AS (
@@ -35,7 +35,7 @@ materials_per_task_date AS (
         AND wo.deleted_at IS NULL
     INNER JOIN services s
         ON s.id = wo.service_id
-    INNER JOIN task_material tm
+    LEFT JOIN task_material tm
         ON tm.task_id = t.id
         AND tm.deleted_at IS NULL
         AND tm.material_id = s.material_id
@@ -46,6 +46,19 @@ materials_per_task_date AS (
         t.work_order_id,
         t.date,
         s.material_id
+),
+
+task_base AS (
+    SELECT
+        t.id AS task_id,
+        t.work_order_id,
+        t.date
+    FROM tasks t
+    INNER JOIN work_orders wo
+        ON wo.id = t.work_order_id
+        AND wo.deleted_at IS NULL
+    WHERE t.date BETWEEN @start_date AND @end_date
+      AND t.task_status_id <> 8
 )
 
 SELECT
@@ -72,22 +85,23 @@ SELECT
     sc.name AS [Category],
     s.name AS [Service],
 
-    wo.id AS [ServiceId],      -- service_id in your output = work_orders.id
-    mpd.task_id AS [WO ID],    -- work order id in your output = tasks.id
+    wo.id AS [ServiceId],   -- work_orders.id
+    tb.task_id AS [WO ID],  -- tasks.id
 
-    mpd.date AS [Date],
+    tb.date AS [Date],
     mpd.material_id AS [Material ID],
     mpd.Actual_Materials AS [Actual Materials],
     CAST(ROUND(ISNULL(ltd.Total_Labor_Hrs, 0), 2) AS DECIMAL(10,2)) AS [Total Labor Hrs],
 
     CASE
         WHEN ISNULL(ltd.Total_Labor_Hrs, 0) = 0 THEN NULL
+        WHEN ISNULL(mpd.Actual_Materials, 0) = 0 THEN NULL
         ELSE CAST(ROUND(mpd.Actual_Materials / ltd.Total_Labor_Hrs, 2) AS DECIMAL(10,2))
     END AS [MPLH]
 
-FROM materials_per_task_date mpd
+FROM task_base tb
 INNER JOIN work_orders wo
-    ON wo.id = mpd.work_order_id
+    ON wo.id = tb.work_order_id
     AND wo.deleted_at IS NULL
 INNER JOIN jobs j
     ON j.id = wo.job_id
@@ -98,16 +112,21 @@ LEFT JOIN services s
 LEFT JOIN service_categories sc
     ON sc.id = s.service_categories_id
 LEFT JOIN labor_per_task_date ltd
-    ON ltd.task_id = mpd.task_id
-    AND ltd.date = mpd.date
+    ON ltd.task_id = tb.task_id
+    AND ltd.date = tb.date
+LEFT JOIN materials_per_task_date mpd
+    ON mpd.task_id = tb.task_id
+    AND mpd.date = tb.date
 LEFT JOIN job_area
     ON job_area.id = j.sub_region_id
 LEFT JOIN locations
     ON locations.id = j.location_id
-
+		
+-- This is where you specificy service id. Comment this out to see all
+WHERE wo.service_id in (15)
 ORDER BY
     j.id,
     wo.id,
-    mpd.task_id,
-    mpd.date,
+    tb.task_id,
+    tb.date,
     mpd.material_id;

@@ -1,0 +1,181 @@
+WITH CrewSizeCalculation AS (
+    SELECT 
+        tc.task_id,
+        tc.user_id,
+        CASE
+            WHEN (SUM(DATEDIFF(MINUTE, tc.[in], tc.[out])) / 60.0) BETWEEN 0 AND 3 THEN 0.3
+            WHEN (SUM(DATEDIFF(MINUTE, tc.[in], tc.[out])) / 60.0) BETWEEN 3 AND 5 THEN 0.5
+            WHEN (SUM(DATEDIFF(MINUTE, tc.[in], tc.[out])) / 60.0) BETWEEN 5 AND 8 THEN 0.75
+            WHEN (SUM(DATEDIFF(MINUTE, tc.[in], tc.[out])) / 60.0) > 8 THEN 1
+            ELSE 0
+        END AS crew_size
+    FROM timeclock tc
+    WHERE tc.deleted_at IS NULL
+    GROUP BY tc.task_id, tc.user_id
+),
+FilteredUserHours AS (
+    SELECT 
+        tc.task_id,
+        tc.user_id,
+        CASE 
+            WHEN SUM(DATEDIFF(MINUTE, tc.[in], tc.[out])) / 60.0 > 10 
+                THEN SUM(DATEDIFF(MINUTE, tc.[in], tc.[out])) / 60.0 - 10 
+            ELSE 0 
+        END AS adjusted_hours
+    FROM timeclock tc
+    WHERE tc.deleted_at IS NULL
+    GROUP BY tc.task_id, tc.user_id
+    HAVING SUM(DATEDIFF(MINUTE, tc.[in], tc.[out])) / 60.0 > 10
+),
+DailyCrewCounts AS (
+    SELECT
+        tc.task_id,
+        CAST(COUNT(DISTINCT tc.user_id) AS FLOAT) / 3.0 AS daily_crews
+    FROM timeclock tc
+    INNER JOIN (
+        SELECT
+            task_id,
+            MIN(CAST([in] AS DATE)) AS first_date
+        FROM timeclock
+        WHERE deleted_at IS NULL
+        GROUP BY task_id
+    ) AS min_dates
+        ON tc.task_id = min_dates.task_id
+       AND CAST(tc.[in] AS DATE) = min_dates.first_date
+    WHERE tc.deleted_at IS NULL
+    GROUP BY tc.task_id
+),
+CrewCountsPerTask AS (
+    SELECT
+        tc.task_id,
+        COUNT(DISTINCT tc.user_id) AS crew_count
+    FROM timeclock tc
+    INNER JOIN (
+        SELECT
+            task_id,
+            MIN(CAST([in] AS DATE)) AS first_date
+        FROM timeclock
+        WHERE deleted_at IS NULL
+        GROUP BY task_id
+    ) AS min_dates
+        ON tc.task_id = min_dates.task_id
+       AND CAST(tc.[in] AS DATE) = min_dates.first_date
+    WHERE tc.deleted_at IS NULL
+    GROUP BY tc.task_id
+)
+
+SELECT
+    jobs.id AS project_id,
+    tasks.id AS wo_id,
+    services.id AS service_id,
+    services.abbreviation AS service,
+    work_order_statuses.name AS service_status,
+
+    -- Daily crews
+    FORMAT(
+        dc.daily_crews, 
+        '0.##'
+    ) AS daily_crews,
+
+    -- Days touched
+    FORMAT(
+        CASE
+            WHEN ROUND(
+                (SUM(DATEDIFF(MINUTE, timeclock.[in], timeclock.[out])) / 60.0) /
+                NULLIF(cc.crew_count, 0) * 0.1 * 1.05, 
+                2
+            ) < 1 THEN ROUND(
+                (SUM(DATEDIFF(MINUTE, timeclock.[in], timeclock.[out])) / 60.0) /
+                NULLIF(cc.crew_count, 0) * 0.1 * 1.05,
+                2
+            )
+            ELSE 1
+        END,
+        '0.##'
+    ) AS days_touched,
+
+    -- Labor hours
+    FORMAT(
+        CASE 
+            WHEN tasks.weather_issue = 0 THEN SUM(DATEDIFF(MINUTE, timeclock.[in], timeclock.[out])) / 60.0
+            ELSE NULL
+        END,
+        '0.##'
+    ) AS labor_hours,
+
+    -- Crew size
+    FORMAT(
+        ISNULL((
+            SELECT SUM(csc.crew_size)
+            FROM CrewSizeCalculation csc
+            WHERE csc.task_id = tasks.id
+        ), 0),
+        '0.##'
+    ) AS crew_size,
+
+    -- Weather issue hours
+    FORMAT(
+        CASE 
+            WHEN tasks.weather_issue = 1 THEN SUM(DATEDIFF(MINUTE, timeclock.[in], timeclock.[out])) / 60.0
+            ELSE NULL
+        END,
+        '0.##'
+    ) AS weather_issue_hours,
+
+    -- Additional equipment hours
+    FORMAT(
+        CASE
+            WHEN EXISTS (
+                SELECT 1
+                FROM FilteredUserHours fuh
+                WHERE fuh.task_id = tasks.id
+            )
+            THEN (
+                (SELECT SUM(fuh.adjusted_hours)
+                 FROM FilteredUserHours fuh
+                 WHERE fuh.task_id = tasks.id
+                )
+                /
+                NULLIF(
+                    (SELECT COUNT(fuh.user_id)
+                     FROM FilteredUserHours fuh
+                     WHERE fuh.task_id = tasks.id
+                    ), 0
+                )
+            )
+            ELSE NULL
+        END,
+        '0.##'
+    ) AS add_equip_hours
+
+FROM jobs
+LEFT JOIN work_orders 
+    ON work_orders.job_id = jobs.id
+LEFT JOIN tasks 
+    ON work_orders.id = tasks.work_order_id
+LEFT JOIN services 
+    ON services.id = work_orders.service_id
+LEFT JOIN work_order_statuses 
+    ON work_orders.work_order_status_id = work_order_statuses.id
+LEFT JOIN timeclock 
+    ON timeclock.task_id = tasks.id
+LEFT JOIN DailyCrewCounts dc
+    ON dc.task_id = tasks.id
+LEFT JOIN CrewCountsPerTask cc
+    ON cc.task_id = tasks.id
+WHERE jobs.deleted_at IS NULL 
+  AND work_orders.deleted_at IS NULL 
+  AND timeclock.deleted_at IS NULL 
+  AND services.id IN (9, 10, 12, 27, 28, 43, 44, 46, 47, 7, 30, 26)
+	AND jobs.id = 7941
+GROUP BY 
+    jobs.id,
+    tasks.id,
+    work_orders.id,
+    services.id,
+    services.abbreviation,
+    tasks.weather_issue,
+    work_order_statuses.name,
+    dc.daily_crews,
+    cc.crew_count
+ORDER BY jobs.id, tasks.id;
